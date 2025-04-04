@@ -11,33 +11,28 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# Legge token e ID admin dalle variabili ambiente
+# Leggi token e admin ID da variabili ambiente
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))  # fallback se ADMIN_ID non è settato
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 
-# Abilita il logging
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Variabili globali
+# Dati globali
 scores = defaultdict(int)
 answered_users = set()
 current_answer = ""
-correct_users = []
 
-# Funzione principale per il quiz
+# Avvia quiz
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global current_answer, answered_users, correct_users
-
-    # Solo admin può avviare il quiz
+    global current_answer, answered_users
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Solo l'admin può avviare il quiz.")
         return
 
     answered_users.clear()
-    correct_users.clear()
 
-    # Richiesta ad AniList API per personaggio casuale
     query = '''
     query {
       Page(page: %d, perPage: 1) {
@@ -64,23 +59,19 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = requests.post("https://graphql.anilist.co", json={"query": query})
         data = response.json()
         char = data["data"]["Page"]["characters"][0]
-     name = char["name"]["full"]
-image = char["image"]["large"].strip()
-anime = char["media"]["nodes"][0]["title"]["romaji"]
+        name = char["name"]["full"]
+        image = char["image"]["large"].strip()
+        anime = char["media"]["nodes"][0]["title"]["romaji"]
 
-# Verifica che l'URL sia valida
-if not image.startswith("http"):
-    await update.message.reply_text("Errore: immagine non valida.")
-    return
-
+        if not image.startswith("http"):
+            await update.message.reply_text("Errore: immagine non valida.")
+            return
     except Exception as e:
-        await update.message.reply_text("Errore nel recupero dei dati.")
+        await update.message.reply_text("Errore nel recupero dati.")
         return
 
     current_answer = name.lower()
-
-    # Opzioni
-    fake_names = ["Naruto", "Goku", "Asuka", "Levi", "Mikasa", "Rem"]
+    fake_names = ["Naruto", "Goku", "Mikasa", "Rem", "Levi", "Yuno"]
     options = random.sample(fake_names, 4)
     options.append(name)
     random.shuffle(options)
@@ -95,13 +86,11 @@ if not image.startswith("http"):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-# Risposte degli utenti
+# Risposta utente
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_answer
-
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
     user_name = query.from_user.first_name
 
@@ -118,7 +107,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.message.reply_text(f"❌ Sbagliato, {user_name}!")
 
-# Classifica
+# Mostra classifica
 async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not scores:
         await update.message.reply_text("Nessun punteggio ancora.")
@@ -140,14 +129,12 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     scores.clear()
     await update.message.reply_text("✅ Classifica resettata.")
 
-# Main
+# Main loop
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("startquiz", start_quiz))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CommandHandler("score", score))
     app.add_handler(CommandHandler("reset", reset))
-
     print("Bot avviato...")
     app.run_polling()
