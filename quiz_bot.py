@@ -64,9 +64,15 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = requests.post("https://graphql.anilist.co", json={"query": query})
         data = response.json()
         char = data["data"]["Page"]["characters"][0]
-        name = char["name"]["full"]
-        image = char["image"]["large"]
-        anime = char["media"]["nodes"][0]["title"]["romaji"]
+     name = char["name"]["full"]
+image = char["image"]["large"].strip()
+anime = char["media"]["nodes"][0]["title"]["romaji"]
+
+# Verifica che l'URL sia valida
+if not image.startswith("http"):
+    await update.message.reply_text("Errore: immagine non valida.")
+    return
+
     except Exception as e:
         await update.message.reply_text("Errore nel recupero dei dati.")
         return
