@@ -2,8 +2,6 @@ import os
 import logging
 import random
 import requests
-import asyncio
-from datetime import datetime
 from collections import defaultdict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -11,6 +9,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    JobQueue,
 )
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -23,15 +22,12 @@ logger = logging.getLogger("AIO_QUIZ")
 scores = defaultdict(int)
 answered_users = set()
 current_answer = ""
-correct_users = []
-reveal_timer = None
-end_timer = None
-message_context = None
 anime_title = ""
+correct_users = []
 
 # --- Funzione per avviare il quiz ---
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global current_answer, answered_users, correct_users, reveal_timer, end_timer, message_context, anime_title
+    global current_answer, answered_users, correct_users, anime_title
 
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("Solo l'admin può avviare AIO QUIZ.")
@@ -39,7 +35,6 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     answered_users.clear()
     correct_users.clear()
-    message_context = context
 
     use_old_anime = random.randint(1, 10) == 1
     year_filter = "1990" if use_old_anime else "2020"
@@ -64,7 +59,7 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = response.json()
         char = data["data"]["Page"]["characters"][0]
         name = char["name"]["full"]
-        image = char["image"]["large"]
+        image = char["image"]["large"].strip()
         anime = char["media"]["nodes"][0]["title"]["romaji"]
         year = char["media"]["nodes"][0]["startDate"]["year"]
         if not use_old_anime and year < 2020:
@@ -83,24 +78,25 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     random.shuffle(options)
 
     keyboard = [[InlineKeyboardButton(opt, callback_data=opt)] for opt in options]
+
     sent_message = await context.bot.send_photo(
         chat_id=update.effective_chat.id,
         photo=image,
-caption="""🎮 *AIO QUIZ!*
-Chi è questo personaggio? Hai 5 minuti per rispondere!""",
+        caption="""🎮 *AIO QUIZ!*
+Indovina il nome del personaggio! Hai 5 minuti per rispondere!""",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-    reveal_timer = context.job_queue.run_once(reveal_hint, 120, data=sent_message)
-    end_timer = context.job_queue.run_once(end_quiz, 300, data=sent_message)
+    context.job_queue.run_once(reveal_hint, 120, chat_id=update.effective_chat.id)
+    context.job_queue.run_once(end_quiz, 300, chat_id=update.effective_chat.id)
 
 
 # --- Suggerimento dopo 2 minuti ---
 async def reveal_hint(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=context.job.chat_id,
-        text=f"🚡 *Suggerimento:* Il personaggio viene da *{anime_title}*.",
+        text=f"💡 *Suggerimento:* Il personaggio viene da *{anime_title}*.",
         parse_mode="Markdown",
     )
 
@@ -110,7 +106,7 @@ async def end_quiz(context: ContextTypes.DEFAULT_TYPE):
     if not correct_users:
         await context.bot.send_message(
             chat_id=context.job.chat_id,
-            text=f"Nessuno ha indovinato. La risposta era: *{current_answer.title()}*",
+            text=f"⏱️ Tempo scaduto! La risposta era: *{current_answer.title()}*",
             parse_mode="Markdown",
         )
 
@@ -146,8 +142,7 @@ async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    text = "🏆 *Classifica AIO QUIZ:*
-"
+    text = "🏆 *Classifica AIO QUIZ:*\n"
     for i, (uid, pts) in enumerate(ranking, 1):
         user = await context.bot.get_chat(uid)
         text += f"{i}. {user.first_name}: {pts} punti\n"
