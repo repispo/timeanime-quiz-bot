@@ -1,127 +1,145 @@
+import os
 import logging
 import random
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from collections import defaultdict
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
 )
-from collections import defaultdict
 
-BOT_TOKEN = "INSERISCI_IL_TUO_TOKEN"
-ADMIN_ID = 608950288  # ID di Repispo
+# Legge token e ID admin da variabili ambiente (compatibile con Railway)
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 608950288))  # Fall-back all'ID di Repispo
+
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Punteggi utenti
 scores = defaultdict(int)
-# Utenti che hanno già risposto a questa domanda
 answered_users = set()
-# Risposta corretta corrente
 current_answer = ""
-# Utenti che hanno indovinato
 correct_users = []
 
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_answer, answered_users, correct_users
-    if update.effective_user.id != ADMIN_ID:
-        return
 
-    answered_users = set()
-    correct_users = []
+    # Resetta dati
+    answered_users.clear()
+    correct_users.clear()
 
-    characters = [
-        {"name": "Kaguya Shinomiya", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b126419-3a9kIXuCAiwA.png"},
-        {"name": "Tomo Aizawa", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b126420-cGBzLhf8bHoF.png"},
-        {"name": "Asuna Yuuki", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b36821-zzSHv0BoNvOT.png"},
-        {"name": "Shinobu Oshino", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b24034-fFEnNi05tM5Z.png"},
-        {"name": "Mai Sakurajima", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b120763-Bp9CybJ8lhqz.png"}
+    # Ottieni dati random da Anilist (GraphQL API)
+    query = '''
+    query {
+      Page(perPage: 1) {
+        characters(sort: FAVOURITES_DESC) {
+          name {
+            full
+          }
+          image {
+            large
+          }
+          media(perPage: 1) {
+            nodes {
+              title {
+                romaji
+              }
+            }
+          }
+        }
+      }
+    }
+    '''
+    response = requests.post(
+        "https://graphql.anilist.co",
+        json={"query": query}
+    )
+    data = response.json()
+    character = data["data"]["Page"]["characters"][0]
+    name = character["name"]["full"]
+    image_url = character["image"]["large"]
+    anime_title = character["media"]["nodes"][0]["title"]["romaji"]
+
+    current_answer = name.lower()
+
+    # Opzioni sbagliate (placeholder)
+    fake_names = ["Naruto", "Mikasa", "Light Yagami", "Shinji", "Rem"]
+    options = random.sample(fake_names, 4)
+    options.append(name)
+    random.shuffle(options)
+
+    keyboard = [
+        [InlineKeyboardButton(opt, callback_data=opt)] for opt in options
     ]
-    options = random.sample(characters, 5)
-    correct = random.choice(options)
-    current_answer = correct["name"]
-
-    buttons = [
-        [InlineKeyboardButton(c["name"], callback_data=c["name"])]
-        for c in options
-    ]
-    reply_markup = InlineKeyboardMarkup(buttons)
 
     await context.bot.send_photo(
         chat_id=update.effective_chat.id,
-        photo=correct["image"],
-        caption="**QUIZ TIME!**\n\nChi è questo personaggio?\nHai 30 secondi per rispondere!",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
+        photo=image_url,
+        caption=f"🎌 QUIZ TIME!\nChi è questo personaggio?\nAnime: *{anime_title}*",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-    context.job_queue.run_once(end_quiz, 30, chat_id=update.effective_chat.id)
-
-async def answer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_answer
-    query = update.callback_query
-    user = query.from_user
 
-    if user.id in answered_users:
-        await query.answer("Hai già risposto!")
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    user_name = query.from_user.first_name
+
+    if user_id in answered_users:
+        await query.reply_text("Hai già risposto!")
         return
 
-    answered_users.add(user.id)
-    answer = query.data
+    answered_users.add(user_id)
+    chosen = query.data.lower()
 
-    if answer == current_answer:
-        scores[user.id] += 1
-        correct_users.append(user)
-        await query.answer("Giusto!")
-    else:
-        await query.answer("Sbagliato!")
-
-async def end_quiz(context: ContextTypes.DEFAULT_TYPE):
-    chat_id = context.job.chat_id
-    if correct_users:
-        winners = "\n".join([f"– <a href='tg://user?id={u.id}'>{u.first_name}</a>" for u in correct_users])
-    else:
-        winners = "Nessuno ha indovinato questa volta!"
-
-    if scores:
-        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        text_ranking = "\n".join(
-            [f"{i+1}. <a href='tg://user?id={uid}'>{uid}</a> – {pts} punti" for i, (uid, pts) in enumerate(ranking)]
+    if chosen == current_answer:
+        scores[user_id] += 1
+        correct_users.append(user_name)
+        await query.edit_message_caption(
+            caption=f"✅ Corretto! Era *{current_answer.title()}*!\n\n+1 punto per {user_name}",
+            parse_mode="Markdown",
         )
     else:
-        text_ranking = "Nessun punto assegnato ancora."
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"✅ Risposta corretta: <b>{current_answer}</b>\n\n"
-             f"{winners}\n\n"
-             f"<b>🏆 Classifica attuale:</b>\n{text_ranking}",
-        parse_mode="HTML"
-    )
+        await query.edit_message_caption(
+            caption=f"❌ Sbagliato! Era *{current_answer.title()}*.",
+            parse_mode="Markdown",
+        )
 
 async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if scores:
-        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        text_ranking = "\n".join(
-            [f"{i+1}. <a href='tg://user?id={uid}'>{uid}</a> – {pts} punti" for i, (uid, pts) in enumerate(ranking)]
-        )
-    else:
-        text_ranking = "Nessun punto ancora."
+    if not scores:
+        await update.message.reply_text("Nessun punteggio disponibile.")
+        return
 
-    await update.message.reply_text(
-        f"<b>🏆 Classifica:</b>\n{text_ranking}",
-        parse_mode="HTML"
-    )
+    ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    text = "🏆 Classifica:\n\n"
+    for i, (user_id, score_value) in enumerate(ranking, 1):
+        user = await context.bot.get_chat(user_id)
+        text += f"{i}. {user.first_name}: {score_value} punti\n"
+    await update.message.reply_text(text)
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id == ADMIN_ID:
-        scores.clear()
-        await update.message.reply_text("Classifica resettata.")
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("Solo l'admin può usare questo comando.")
+        return
+    scores.clear()
+    await update.message.reply_text("✅ Classifica azzerata.")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("startquiz", start_quiz))
     app.add_handler(CommandHandler("score", score))
     app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CallbackQueryHandler(answer_callback))
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+    print("Bot in esecuzione...")
     app.run_polling()
+
