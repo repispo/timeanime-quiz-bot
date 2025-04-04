@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_IDS = [608950288, 123456789]  # Aggiungi qui gli ID admin che possono usare /startquiz
+ADMIN_IDS = [608950288, 123456789, 166975784]  # Aggiungi qui gli ID admin che possono usare /startquiz
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
