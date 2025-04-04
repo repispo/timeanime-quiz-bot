@@ -86,7 +86,8 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent_message = await context.bot.send_photo(
         chat_id=update.effective_chat.id,
         photo=image,
-        caption="🎮 *AIO QUIZ!*
+        caption="""🎮 *AIO QUIZ!*
+Indovina il nome del personaggio!""",
 Chi è questo personaggio? Hai 5 minuti per rispondere!",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
