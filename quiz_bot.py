@@ -1,8 +1,6 @@
 import logging
-import os
 import random
 import requests
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -10,149 +8,120 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
+from collections import defaultdict
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(os.getenv("ADMIN_ID"))]
+BOT_TOKEN = "INSERISCI_IL_TUO_TOKEN"
+ADMIN_ID = 608950288  # ID di Repispo
 
-logging.basicConfig(level=logging.INFO)
-
-API_URL = "https://graphql.anilist.co"
-
-async def get_random_character():
-    page = random.randint(1, 100)
-    per_page = 25
-    query = """
-    query ($page: Int, $perPage: Int) {
-      Page(page: $page, perPage: $perPage) {
-        characters {
-          id
-          name {
-            full
-          }
-          image {
-            large
-          }
-        }
-      }
-    }
-    """
-    variables = {
-        "page": page,
-        "perPage": per_page
-    }
-
-    response = requests.post(API_URL, json={'query': query, 'variables': variables})
-    characters = response.json().get("data", {}).get("Page", {}).get("characters", [])
-
-    valid = [c for c in characters if c["name"]["full"] and c["image"]["large"]]
-    if len(valid) < 5:
-        return await get_random_character()
-
-    correct = random.choice(valid)
-    wrong = random.sample([c for c in valid if c["id"] != correct["id"]], 4)
-
-    options = [correct["name"]["full"]] + [c["name"]["full"] for c in wrong]
-    random.shuffle(options)
-
-    return {
-        "image": correct["image"]["large"],
-        "correct": correct["name"]["full"],
-        "options": options
-    }
-
-current_question = None
-participants = {}
-scores = {}
+# Punteggi utenti
+scores = defaultdict(int)
+# Utenti che hanno già risposto a questa domanda
+answered_users = set()
+# Risposta corretta corrente
+current_answer = ""
+# Utenti che hanno indovinato
+correct_users = []
 
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("Solo gli admin possono avviare il quiz.")
+    global current_answer, answered_users, correct_users
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    global current_question, participants
-    participants = {}
+    answered_users = set()
+    correct_users = []
 
-    char_data = await get_random_character()
-    current_question = char_data
-
-    keyboard = [
-        [InlineKeyboardButton(opt, callback_data=opt)]
-        for opt in char_data["options"]
+    characters = [
+        {"name": "Kaguya Shinomiya", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b126419-3a9kIXuCAiwA.png"},
+        {"name": "Tomo Aizawa", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b126420-cGBzLhf8bHoF.png"},
+        {"name": "Asuna Yuuki", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b36821-zzSHv0BoNvOT.png"},
+        {"name": "Shinobu Oshino", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b24034-fFEnNi05tM5Z.png"},
+        {"name": "Mai Sakurajima", "image": "https://s4.anilist.co/file/anilistcdn/character/large/b120763-Bp9CybJ8lhqz.png"}
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    options = random.sample(characters, 5)
+    correct = random.choice(options)
+    current_answer = correct["name"]
+
+    buttons = [
+        [InlineKeyboardButton(c["name"], callback_data=c["name"])]
+        for c in options
+    ]
+    reply_markup = InlineKeyboardMarkup(buttons)
 
     await context.bot.send_photo(
         chat_id=update.effective_chat.id,
-        photo=char_data["image"],
-        caption=f"🧠 *INDOVINA IL PERSONAGGIO!*\nChi è questo personaggio?\nHai *5 minuti* per rispondere!",
-        parse_mode="Markdown",
+        photo=correct["image"],
+        caption="**QUIZ TIME!**\n\nChi è questo personaggio?\nHai 30 secondi per rispondere!",
         reply_markup=reply_markup,
+        parse_mode="Markdown"
     )
 
-    await asyncio.sleep(300)
-    await end_quiz(context, update.effective_chat.id)
+    context.job_queue.run_once(end_quiz, 30, chat_id=update.effective_chat.id)
 
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global participants, current_question, scores
-
+async def answer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global current_answer
     query = update.callback_query
     user = query.from_user
-    await query.answer()
 
-    if not current_question:
+    if user.id in answered_users:
+        await query.answer("Hai già risposto!")
         return
 
-    if user.id in participants:
-        await query.message.reply_text(f"{user.first_name}, hai già risposto!")
-        return
+    answered_users.add(user.id)
+    answer = query.data
 
-    participants[user.id] = query.data
-
-    if query.data == current_question["correct"]:
-        scores[user.id] = scores.get(user.id, 0) + 1
-        await query.message.reply_text(f"✅ {user.first_name} ha indovinato!")
+    if answer == current_answer:
+        scores[user.id] += 1
+        correct_users.append(user)
+        await query.answer("Giusto!")
     else:
-        await query.message.reply_text(f"❌ {user.first_name} ha sbagliato!")
+        await query.answer("Sbagliato!")
 
-async def end_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id):
-    global current_question
-    if not current_question:
-        return
+async def end_quiz(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.chat_id
+    if correct_users:
+        winners = "\n".join([f"– <a href='tg://user?id={u.id}'>{u.first_name}</a>" for u in correct_users])
+    else:
+        winners = "Nessuno ha indovinato questa volta!"
+
+    if scores:
+        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        text_ranking = "\n".join(
+            [f"{i+1}. <a href='tg://user?id={uid}'>{uid}</a> – {pts} punti" for i, (uid, pts) in enumerate(ranking)]
+        )
+    else:
+        text_ranking = "Nessun punto assegnato ancora."
 
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"⏱ Tempo scaduto!\nLa risposta corretta era: *{current_question['correct']}*",
-        parse_mode="Markdown"
+        text=f"✅ Risposta corretta: <b>{current_answer}</b>\n\n"
+             f"{winners}\n\n"
+             f"<b>🏆 Classifica attuale:</b>\n{text_ranking}",
+        parse_mode="HTML"
     )
-    current_question = None
 
 async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not scores:
-        await update.message.reply_text("Nessuno ha ancora punti!")
-        return
+    if scores:
+        ranking = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        text_ranking = "\n".join(
+            [f"{i+1}. <a href='tg://user?id={uid}'>{uid}</a> – {pts} punti" for i, (uid, pts) in enumerate(ranking)]
+        )
+    else:
+        text_ranking = "Nessun punto ancora."
 
-    leaderboard = "🏆 *Classifica attuale:*\n\n"
-    for user_id, pts in scores.items():
-        user = await context.bot.get_chat(user_id)
-        leaderboard += f"{user.first_name}: {pts} punti\n"
-
-    await update.message.reply_text(leaderboard, parse_mode="Markdown")
+    await update.message.reply_text(
+        f"<b>🏆 Classifica:</b>\n{text_ranking}",
+        parse_mode="HTML"
+    )
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("Solo l'admin può resettare i punteggi.")
-        return
-
-    scores.clear()
-    await update.message.reply_text("✅ Classifica resettata!")
+    if update.effective_user.id == ADMIN_ID:
+        scores.clear()
+        await update.message.reply_text("Classifica resettata.")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("startquiz", start_quiz))
-    app.add_handler(CallbackQueryHandler(handle_answer))
     app.add_handler(CommandHandler("score", score))
     app.add_handler(CommandHandler("reset", reset))
-
-    print("Bot avviato...")
+    app.add_handler(CallbackQueryHandler(answer_callback))
     app.run_polling()
