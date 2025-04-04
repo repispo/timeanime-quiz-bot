@@ -1,7 +1,9 @@
+""
 import os
 import logging
 import random
 import requests
+import asyncio
 from collections import defaultdict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -98,25 +100,25 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text="⏳ Aspetta 2 minuti per l'indizio..."
     )
 
-    await context.application.create_task(provide_hint(context, update.effective_chat.id))
-    await context.application.create_task(timeout_quiz(context, update.effective_chat.id))
+    context.application.create_task(provide_hint(context, update.effective_chat.id, anime))
+    context.application.create_task(timeout_quiz(context, update.effective_chat.id))
 
 # Indizio dopo 2 minuti
-async def provide_hint(context, chat_id):
-    await context.application.bot.send_message(
+async def provide_hint(context, chat_id, anime_hint):
+    await asyncio.sleep(120)
+    await context.bot.send_message(
         chat_id=chat_id,
-        text=f"💡 Indizio: il personaggio proviene da *{current_anime}*",
+        text=f"💡 Indizio: il personaggio proviene da *{anime_hint}*",
         parse_mode="Markdown",
-        delay=120
     )
 
 # Timeout dopo 5 minuti
 async def timeout_quiz(context, chat_id):
-    await context.application.bot.send_message(
+    await asyncio.sleep(300)
+    await context.bot.send_message(
         chat_id=chat_id,
         text=f"⏰ Tempo scaduto! La risposta corretta era: *{current_answer.title()}*",
         parse_mode="Markdown",
-        delay=300
     )
 
 # Gestione delle risposte
