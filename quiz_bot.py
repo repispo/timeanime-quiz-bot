@@ -14,7 +14,9 @@ from telegram.ext import (
 
 # Configurazione
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_IDS = list(map(int, os.environ.get("ADMIN_IDS", "").split(",")))
+admin_ids_str = os.environ.get("ADMIN_IDS", "")
+ADMIN_IDS = [int(x) for x in admin_ids_str.split(",") if x.strip().isdigit()]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -106,7 +108,11 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(end_quiz(context, update.effective_chat.id))
 
 # Generatore nomi fittizi
-fake_names_pool = ["Naruto Uzumaki", "Goku Son", "Asuka Langley", "Levi Ackerman", "Mikasa Ackerman", "Rem", "Shinji Ikari", "Light Yagami", "Rukia Kuchiki", "Edward Elric"]
+fake_names_pool = [
+    "Naruto Uzumaki", "Goku Son", "Asuka Langley", "Levi Ackerman",
+    "Mikasa Ackerman", "Rem Re:Zero", "Shinji Ikari", "Light Yagami",
+    "Rukia Kuchiki", "Edward Elric", "Sasuke Uchiha", "Eren Yeager"
+]
 def fake_name():
     return random.choice(fake_names_pool)
 
@@ -115,7 +121,7 @@ async def provide_hint(context, chat_id):
     await asyncio.sleep(120)
     global hint_given
     if quiz_active:
-        await context.bot.send_message(chat_id=chat_id, text=f"🔑 Indizio: il personaggio proviene da *{anime_hint}*", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=chat_id, text=f"🔎 Indizio: il personaggio proviene da *{anime_hint}*", parse_mode="Markdown")
         hint_given = True
 
 # Fine quiz dopo 5 minuti
